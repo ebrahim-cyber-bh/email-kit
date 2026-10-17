@@ -1,0 +1,5 @@
+# Credentials: never committed
+.env
+node_modules/
+*.log
+go/bin/

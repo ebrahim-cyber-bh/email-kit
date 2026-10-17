@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Email kit demo</title>
+  <style>
+    :root { --bg: #09090b; --card: #111113; --line: #27272a; --text: #f4f4f5; --muted: #a1a1aa; --accent: #00d1b2; --bad: #f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; padding: 16px; }
+    main { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 24px; }
+    .tabs { display: flex; gap: 6px; margin: 0 0 20px; }
+    .tabs button { flex: 1; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+    .tabs button[aria-selected="true"] { background: var(--accent); color: #002e28; border-color: var(--accent); }
+    h1 { margin: 0 0 4px; font-size: 20px; }
+    p { margin: 0 0 18px; color: var(--muted); }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+    input, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; margin: 0 0 14px; }
+    textarea { min-height: 110px; resize: vertical; }
+    #code { font: 700 24px 'Courier New', monospace; letter-spacing: 10px; text-align: center; }
+    button { width: 100%; padding: 11px; border: 0; border-radius: 10px; background: var(--accent); color: #002e28; font: 600 15px system-ui, sans-serif; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    button.link { background: none; color: var(--accent); margin-top: 8px; }
+    .row { display: flex; gap: 8px; }
+    .row > div { flex: 1; min-width: 0; }
+    #msg { min-height: 1.5em; margin: 14px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+    #msg.bad { color: var(--bad); }
+    #msg.good { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="mail" type="button">Send an email</button>
+      <button role="tab" aria-selected="false" data-tab="otp" type="button">One-time code</button>
+    </div>
+
+    <section id="tab-mail">
+      <h1>Send an email</h1>
+      <p>A normal message in the kit's layout.</p>
+      <form id="mail">
+        <label for="to">To</label>
+        <input id="to" type="email" required>
+        <label for="subject">Subject</label>
+        <input id="subject" required>
+        <label for="message">Message (blank line = new paragraph)</label>
+        <textarea id="message" required></textarea>
+        <div class="row">
+          <div><label for="btext">Button text (optional)</label><input id="btext"></div>
+          <div><label for="burl">Button link</label><input id="burl" type="url"></div>
+        </div>
+        <button id="mailBtn">Send</button>
+      </form>
+    </section>
+
+    <section id="tab-otp" hidden>
+      <h1>Verify your email</h1>
+      <p>We send a 6-digit code to your inbox.</p>
+      <form id="send">
+        <label for="email">Email</label>
+        <input id="email" type="email" required autocomplete="email">
+        <button id="sendBtn">Send code</button>
+      </form>
+      <form id="verify" hidden>
+        <label for="code">Code</label>
+        <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+        <button id="verifyBtn">Verify</button>
+        <button type="button" class="link" id="resend">Send a new code</button>
+      </form>
+    </section>
+
+    <p id="msg" role="status"></p>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let timer;
+    function say(text, kind = '') { $('msg').textContent = text; $('msg').className = kind; }
+    const consoleNote = (r) => (r.mode === 'console' ? ' (console mode: see the server terminal)' : '');
+    async function post(url, body) {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return r.json();
+    }
+
+    document.querySelectorAll('[role=tab]').forEach((tab) => {
+      tab.onclick = () => {
+        document.querySelectorAll('[role=tab]').forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
+        $('tab-mail').hidden = tab.dataset.tab !== 'mail';
+        $('tab-otp').hidden = tab.dataset.tab !== 'otp';
+        say('');
+      };
+    });
+
+    $('mail').onsubmit = async (e) => {
+      e.preventDefault();
+      $('mailBtn').disabled = true;
+      const r = await post('/api/mail/send', { to: $('to').value, subject: $('subject').value, message: $('message').value, buttonText: $('btext').value, buttonUrl: $('burl').value });
+      $('mailBtn').disabled = false;
+      say(r.message + (r.success ? consoleNote(r) : ''), r.success ? 'good' : 'bad');
+    };
+
+    function cooldown(seconds) {
+      clearInterval(timer);
+      let left = seconds;
+      const tick = () => {
+        $('resend').disabled = left > 0;
+        $('resend').textContent = left > 0 ? `Send a new code (${left}s)` : 'Send a new code';
+        if (left-- <= 0) clearInterval(timer);
+      };
+      tick();
+      timer = setInterval(tick, 1000);
+    }
+    async function sendCode() {
+      $('sendBtn').disabled = true;
+      const r = await post('/api/otp/send', { email: $('email').value });
+      $('sendBtn').disabled = false;
+      if (r.retryAfter) cooldown(r.retryAfter);
+      if (!r.success) return say(r.message, 'bad');
+      $('verify').hidden = false;
+      $('code').focus();
+      say(r.message + consoleNote(r));
+      cooldown(60);
+    }
+    $('send').onsubmit = (e) => { e.preventDefault(); sendCode(); };
+    $('resend').onclick = sendCode;
+    $('verify').onsubmit = async (e) => {
+      e.preventDefault();
+      $('verifyBtn').disabled = true;
+      const r = await post('/api/otp/verify', { email: $('email').value, code: $('code').value });
+      $('verifyBtn').disabled = false;
+      say(r.message, r.success ? 'good' : 'bad');
+      if (r.success) $('verify').hidden = true;
+    };
+  </script>
+</body>
+</html>
